@@ -447,7 +447,7 @@ impl ClientReplicationLoop {
                     batch_update.delete(key);
                 }
             }
-            if batch_update.len() % MAX_BATCH_SIZE == 0 {
+            if batch_update.len().is_multiple_of(MAX_BATCH_SIZE) {
                 if let Err(e) = store.apply_batch(&batch_update) {
                     error!("Failed to apply replication batch into store. {:?}", e);
                     return RequestChangesResult::Reconnect;

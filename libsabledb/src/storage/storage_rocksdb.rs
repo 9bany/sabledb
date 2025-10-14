@@ -70,18 +70,18 @@ impl UpdateBatchIterator {
 impl rocksdb::WriteBatchIterator for UpdateBatchIterator {
     fn put(&mut self, key: &[u8], value: &[u8]) {
         // if "prefix" limit is set, only collect keys that start with the prefix
-        if !self.starts_with(&key) {
+        if !self.starts_with(key) {
             return;
         }
-        self.storage_updates.add_put(&key, &value);
+        self.storage_updates.add_put(key, value);
     }
 
     fn delete(&mut self, key: &[u8]) {
         // if "prefix" limit is set, only collect keys that start with the prefix
-        if !self.starts_with(&key) {
+        if !self.starts_with(key) {
             return;
         }
-        self.storage_updates.add_delete(&key);
+        self.storage_updates.add_delete(key);
     }
 }
 
@@ -398,7 +398,7 @@ impl StorageTrait for StorageRocksDb {
         let mut reader = crate::U8ArrayReader::with_buffer(&storage_updates.serialised_data);
         while let Some(change) = StorageUpdates::next(&mut reader) {
             batch_update.push(change);
-            if batch_update.len() % MAX_BATCH_SIZE == 0 {
+            if batch_update.len().is_multiple_of(MAX_BATCH_SIZE) {
                 self.apply_batch(&batch_update)?;
                 batch_update.clear();
             }

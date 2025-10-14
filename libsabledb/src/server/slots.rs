@@ -466,7 +466,7 @@ impl<'a> SlotFileImporter<'a> {
                     del_ops = del_ops.saturating_add(1);
                 }
             }
-            if batch_update.len() % MAX_BATCH_SIZE == 0 {
+            if batch_update.len().is_multiple_of(MAX_BATCH_SIZE) {
                 self.db.apply_batch(&batch_update)?;
                 batch_update.clear();
             }

@@ -3070,11 +3070,8 @@ impl ZSetCommands {
             // Keep track of items that were not visited in the result set during this iteration
             // these items, should be removed from the final result set
             // We start by assuming that all items were NOT visited
-            let not_visited: HashSet<BytesMut> = result_set_clone
-                .borrow()
-                .iter()
-                .map(|(k, _w)| k.clone())
-                .collect();
+            let not_visited: HashSet<BytesMut> =
+                result_set_clone.borrow().keys().cloned().collect();
 
             let not_visited = Rc::new(RefCell::new(not_visited));
             let not_visited_clone = not_visited.clone();
