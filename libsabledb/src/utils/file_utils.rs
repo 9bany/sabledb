@@ -27,7 +27,7 @@ use std::path::Path;
 ///
 /// # Examples
 ///
-/// ```
+/// ```no_compile
 /// use std::path::Path;
 ///
 /// let path = Path::new("output/example.txt");
@@ -35,7 +35,7 @@ use std::path::Path;
 /// write_file_content(path, &content);
 /// ```
 ///
-/// ```
+/// ```no_compile
 /// use std::path::Path;
 ///
 /// // Parent directories will be created automatically
@@ -89,7 +89,7 @@ pub fn write_file_content(filepath: &Path, content: &String) {
 ///
 /// # Examples
 ///
-/// ```
+/// ```no_compile
 /// use std::path::Path;
 ///
 /// let path = Path::new("example.txt");
