@@ -575,7 +575,7 @@ impl StorageAdapter {
         db.latest_sequence_number()
     }
 
-    pub fn create_iterator(&self, prefix: &BytesMut) -> Result<IteratorAdapter, SableError> {
+    pub fn create_iterator(&self, prefix: &BytesMut) -> Result<IteratorAdapter<'_>, SableError> {
         let Some(db) = &self.store else {
             return Err(SableError::OtherError("Database is not opened".to_string()));
         };
@@ -589,7 +589,7 @@ impl StorageAdapter {
     pub fn create_reverse_iterator(
         &self,
         upper_bound: &BytesMut,
-    ) -> Result<IteratorAdapter, SableError> {
+    ) -> Result<IteratorAdapter<'_>, SableError> {
         let Some(db) = &self.store else {
             return Err(SableError::OtherError("Database is not opened".to_string()));
         };

@@ -210,7 +210,9 @@ impl NodeTalkClient {
         self.read_response(reader)
     }
 
-    fn split_stream(&self) -> Result<(TcpStreamBytesWriter, TcpStreamBytesReader), SableError> {
+    fn split_stream(
+        &self,
+    ) -> Result<(TcpStreamBytesWriter<'_>, TcpStreamBytesReader<'_>), SableError> {
         let Some(stream) = &self.stream else {
             return Err(SableError::ConnectionNotOpened);
         };

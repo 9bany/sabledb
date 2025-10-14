@@ -2877,7 +2877,7 @@ impl ZSetCommands {
     /// interval is exclusive or inclusive, respectively.
     /// The special values of `+` or `-` for start and stop have the special meaning or positively infinite
     /// and negatively infinite strings
-    fn parse_lex_index(index: &[u8]) -> LexIndex {
+    fn parse_lex_index(index: &[u8]) -> LexIndex<'_> {
         if index.is_empty() {
             return LexIndex::Invalid;
         }

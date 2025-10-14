@@ -413,7 +413,7 @@ impl StorageTrait for StorageRocksDb {
     }
 
     /// Create an forward iterator
-    fn create_iterator<'a>(&self, prefix: &BytesMut) -> Result<IteratorAdapter, SableError> {
+    fn create_iterator<'a>(&self, prefix: &BytesMut) -> Result<IteratorAdapter<'_>, SableError> {
         let mut read_options = rocksdb::ReadOptions::default();
         read_options.fill_cache(false);
         let mut iterator = self.store.raw_iterator_opt(read_options);
@@ -428,7 +428,7 @@ impl StorageTrait for StorageRocksDb {
     fn create_reverse_iterator<'a>(
         &self,
         upper_bound: &BytesMut,
-    ) -> Result<IteratorAdapter, SableError> {
+    ) -> Result<IteratorAdapter<'_>, SableError> {
         let mut read_options = rocksdb::ReadOptions::default();
         read_options.fill_cache(false);
         let mut iterator = self.store.raw_iterator_opt(read_options);

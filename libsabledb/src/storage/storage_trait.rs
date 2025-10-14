@@ -149,7 +149,7 @@ pub trait StorageTrait {
     fn latest_sequence_number(&self) -> Result<u64, SableError>;
 
     /// Create a database iterator starting from `prefix`
-    fn create_iterator(&self, prefix: &BytesMut) -> Result<IteratorAdapter, SableError>;
+    fn create_iterator(&self, prefix: &BytesMut) -> Result<IteratorAdapter<'_>, SableError>;
 
     /// Create a reverse database iterator
     /// `upper_bound` should be the first prefix after the requested prefix.
@@ -158,7 +158,7 @@ pub trait StorageTrait {
     fn create_reverse_iterator(
         &self,
         upper_bound: &BytesMut,
-    ) -> Result<IteratorAdapter, SableError>;
+    ) -> Result<IteratorAdapter<'_>, SableError>;
 
     /// Delete keys ranging from `[start, end)` (including `start` excluding `end`) from the database.
     /// If `start` is `None`, we start deleting from the first record

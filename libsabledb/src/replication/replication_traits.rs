@@ -50,7 +50,7 @@ pub struct TcpStreamBytesReader<'a> {
 
 impl TcpStreamBytesReader<'_> {
     const LEN_SIZE: usize = std::mem::size_of::<usize>();
-    pub fn new(tcp_stream: &TcpStream) -> TcpStreamBytesReader {
+    pub fn new(tcp_stream: &TcpStream) -> TcpStreamBytesReader<'_> {
         TcpStreamBytesReader {
             tcp_stream,
             bytes_left: 0,
