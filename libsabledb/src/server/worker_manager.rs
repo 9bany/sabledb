@@ -27,7 +27,11 @@ impl WorkerManager {
         store: StorageAdapter,
         server_state: Arc<ServerState>,
     ) -> Result<Self, SableError> {
-        let core_ids = core_affinity::get_core_ids();
+        let core_ids = if cfg!(not(target_os = "macos")) {
+            core_affinity::get_core_ids()
+        } else {
+            None
+        };
         let count = match &core_ids {
             Some(core_ids) => std::cmp::min(core_ids.len(), count),
             None => count,
