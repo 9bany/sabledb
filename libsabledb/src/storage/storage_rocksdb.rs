@@ -68,7 +68,7 @@ impl UpdateBatchIterator {
 }
 
 impl rocksdb::WriteBatchIterator for UpdateBatchIterator {
-    fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>) {
+    fn put(&mut self, key: &[u8], value: &[u8]) {
         // if "prefix" limit is set, only collect keys that start with the prefix
         if !self.starts_with(&key) {
             return;
@@ -76,7 +76,7 @@ impl rocksdb::WriteBatchIterator for UpdateBatchIterator {
         self.storage_updates.add_put(&key, &value);
     }
 
-    fn delete(&mut self, key: Box<[u8]>) {
+    fn delete(&mut self, key: &[u8]) {
         // if "prefix" limit is set, only collect keys that start with the prefix
         if !self.starts_with(&key) {
             return;

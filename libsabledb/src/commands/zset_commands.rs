@@ -3022,7 +3022,7 @@ impl ZSetCommands {
             return Ok(IntersectError::SyntaxError);
         }
 
-        let keys_to_lock: Vec<&BytesMut> = input_keys.iter().map(|(k, _w)| (*k)).collect();
+        let keys_to_lock: Vec<&BytesMut> = input_keys.iter().map(|(k, _w)| *k).collect();
         let zset_db = ZSetDb::with_storage(client_state.database(), client_state.database_id());
 
         // For best performance, locate the smallest set. This will be our base working set
