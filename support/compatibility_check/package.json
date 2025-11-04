@@ -1,0 +1,21 @@
+{
+  "name": "sabledb-compatibility-check",
+  "version": "1.0.0",
+  "description": "Redis compatibility checker for SableDB",
+  "type": "module",
+  "scripts": {
+    "generate-compatibility": "bun run generate-compatibility-file.ts",
+    "generate-support": "bun run generate-support-file.ts",
+    "update-from-readme": "bun run update-support-from-readme.ts",
+    "extract-from-code": "bun run extract-from-commander.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "module": "index.ts",
+  "private": true,
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}

@@ -1,0 +1,17 @@
+# Generated files (reports)
+# COMPATIBILITY.md is now written to docs/ folder
+commands-data.json
+
+# Support file is checked in, not ignored
+# sabledb-support.jsonl
+
+# Backup/test files
+*-backup.jsonl
+*-test.jsonl
+
+# Node modules (if any)
+node_modules/
+
+# Bun files
+bun.lockb
+bun.lock
