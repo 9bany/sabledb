@@ -23,4 +23,4 @@ jobs:
     - name: Clippy
       run: cargo clippy
     - name: Run tests
-      run: cargo test # -- --skip integtests
+      run: cargo test -- --skip integtests

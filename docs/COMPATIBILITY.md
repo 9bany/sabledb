@@ -321,14 +321,14 @@
 | RPUSH | ✅ | Appends one or more elements to a list. Creates the key if i |  |
 | RPUSHX | ✅ | Appends one or more elements to a list only when the list ex |  |
 
-### STRING (20/21 supported)
+### STRING (21/21 supported)
 
 | Command | Supported | Summary | Notes |
 |---------|-----------|---------|-------|
 | APPEND | ✅ | Appends a string to the value of a key. Creates the key if i |  |
 | DECR | ✅ | Decrements the integer value of a key by one. Uses 0 as init |  |
 | DECRBY | ✅ | Decrements a number from the integer value of a key. Uses 0  |  |
-| DELIFEQ | ❌ | Delete key if value matches string. |  |
+| DELIFEQ | ✅ | Delete key if value matches string. |  |
 | GETDEL | ✅ | Returns the string value of a key after deleting the key. |  |
 | GETEX | ✅ | Returns the string value of a key after setting its expirati |  |
 | GETRANGE | ✅ | Returns a substring of the string stored at a key. |  |

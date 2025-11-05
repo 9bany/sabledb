@@ -110,6 +110,9 @@ impl StringCommands {
             ValkeyCommandName::Substr => {
                 Self::substr(client_state, command, &mut response_buffer).await?;
             }
+            ValkeyCommandName::Delifeq => {
+                Self::delifeq(client_state, command, &mut response_buffer).await?;
+            }
             _ => {
                 return Err(SableError::InvalidArgument(format!(
                     "Non string command `{}`",
@@ -1070,6 +1073,88 @@ impl StringCommands {
         Self::getrange(client_state, command, response_buffer).await
     }
 
+    /// Deletes the key if its value matches the given string.
+    ///
+    /// This function implements the `DELIFEQ` command, which atomically checks if a key's value
+    /// equals the provided string and deletes the key only if they match. The operation acquires
+    /// a lock on the key to ensure atomicity.
+    ///
+    /// # Parameters
+    ///
+    /// * `client_state` - `Rc<ClientState>` - Shared reference to the client's state, providing
+    ///   access to the database and database ID.
+    /// * `command` - `Rc<ValkeyCommand>` - The command object containing the parsed command arguments.
+    ///   Expected format: `DELIFEQ <key> <value>`.
+    /// * `response_buffer` - `&mut BytesMut` - Mutable buffer where the RESP-encoded response will
+    ///   be written.
+    ///
+    /// # Return value
+    ///
+    /// Returns `Result<(), SableError>`:
+    /// * `Ok(())` - The operation completed successfully. The response buffer will contain:
+    ///   - `1` if the key existed, its value matched, and it was deleted.
+    ///   - `0` if the key did not exist or its value did not match.
+    /// * `Err(SableError)` - An error occurred during lock acquisition, database access, or if the
+    ///   key holds a value of the wrong type.
+    ///
+    /// # Errors
+    ///
+    /// * Returns `SableError` if the command has an incorrect number of arguments.
+    /// * Returns `SableError` if the lock cannot be acquired.
+    /// * Returns `SableError` if database operations fail.
+    /// * Writes a WRONGTYPE error response to `response_buffer` if the key exists but holds a
+    ///   non-string value.
+    ///
+    /// # Examples
+    ///
+    /// ```no_compile
+    /// use std::rc::Rc;
+    /// use bytes::BytesMut;
+    ///
+    /// # async fn example(client_state: Rc<ClientState>, command: Rc<ValkeyCommand>) -> Result<(), SableError> {
+    /// let mut response_buffer = BytesMut::new();
+    /// delifeq(client_state, command, &mut response_buffer).await?;
+    /// // response_buffer now contains "1" if deleted, "0" if not matched/not found
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # See also
+    ///
+    /// * [Valkey DELIFEQ command documentation](https://valkey.io/commands/delifeq/)
+    /// * `StringsDb::get()` - Retrieves the string value for a key
+    /// * `StringsDb::delete()` - Deletes a key from the database
+    async fn delifeq(
+        client_state: Rc<ClientState>,
+        command: Rc<ValkeyCommand>,
+        response_buffer: &mut BytesMut,
+    ) -> Result<(), SableError> {
+        check_args_count!(command, 3, response_buffer);
+        check_args_count!(command, 2, response_buffer);
+        let builder = RespBuilderV2::default();
+        let key = command_arg_at!(command, 1);
+        let val = command_arg_at!(command, 2);
+
+        let _unused = LockManager::lock(key, client_state.clone(), command.clone()).await?;
+        let mut db = StringsDb::with_storage(client_state.database(), client_state.database_id());
+
+        match db.get(key)? {
+            StringGetResult::Some((value, _)) if value.eq(&val) => {
+                // Delete the key
+                db.delete(key)?;
+                builder.number_u64(response_buffer, 1);
+            }
+            StringGetResult::Some(_) => {
+                builder.number_u64(response_buffer, 0);
+            }
+            StringGetResult::None => builder.number_u64(response_buffer, 0),
+            StringGetResult::WrongType => {
+                builder_return_wrong_type!(builder, response_buffer);
+            }
+        };
+        Ok(())
+    }
+
     /// Set `key` with `value`.
     /// `store` the underlying storage
     /// `key` the key
@@ -1425,6 +1510,14 @@ mod test {
         (vec!["substr", "key1"], "-ERR wrong number of arguments for 'substr' command\r\n"),
         (vec!["substr", "key1", "0"], "-ERR wrong number of arguments for 'substr' command\r\n"),
     ], "substr"; "substr")]
+    #[test_case(vec![
+        (vec!["set", "key1", "val1"], "+OK\r\n"),
+        (vec!["delifeq", "key1", "val2"], ":0\r\n"),
+        (vec!["delifeq", "key1", "val1"], ":1\r\n"),
+        (vec!["delifeq", "key1", "val1"], ":0\r\n"),
+        (vec!["sadd", "set_key", "somevalue"], ":1\r\n"),
+        (vec!["delifeq", "set_key", "somevalue"], "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n"),
+    ], "delifeq"; "delifeq")]
     fn test_string_commands(
         args_vec: Vec<(Vec<&'static str>, &'static str)>,
         test_name: &str,

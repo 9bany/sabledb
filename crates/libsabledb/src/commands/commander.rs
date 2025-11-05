@@ -32,6 +32,7 @@ pub enum ValkeyCommandFlags {
 
 #[derive(Clone, Debug, Default, EnumString, PartialEq, Eq)]
 pub enum ValkeyCommandName {
+    // String commands
     Append,
     Decr,
     DecrBy,
@@ -57,6 +58,7 @@ pub enum ValkeyCommandName {
     SetRange,
     Strlen,
     Substr,
+    Delifeq,
     // List commands
     Lpush,
     Lpushx,
@@ -804,6 +806,13 @@ impl Default for CommandsManager {
                     .with_arity(-2)
                     .with_last_key(-1)
                     .multi_key(),
+            ),
+            (
+                "delifeq",
+                CommandMetadata::new(ValkeyCommandName::Delifeq)
+                    .write()
+                    .write()
+                    .with_arity(3),
             ),
             (
                 "exists",

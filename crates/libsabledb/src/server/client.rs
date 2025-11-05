@@ -581,7 +581,8 @@ impl Client {
             | ValkeyCommandName::Setnx
             | ValkeyCommandName::SetRange
             | ValkeyCommandName::Strlen
-            | ValkeyCommandName::Substr => {
+            | ValkeyCommandName::Substr
+            | ValkeyCommandName::Delifeq => {
                 match StringCommands::handle_command(client_state.clone(), command.clone(), tx)
                     .await?
                 {
