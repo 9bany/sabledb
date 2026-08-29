@@ -684,7 +684,9 @@ impl Client {
                 }
             }
             // AuditLog commands
-            ValkeyCommandName::AuditAppend | ValkeyCommandName::AuditRange => {
+            ValkeyCommandName::AuditAppend
+            | ValkeyCommandName::AuditRange
+            | ValkeyCommandName::AuditFeed => {
                 match AuditCommands::handle_command(client_state.clone(), command, tx).await? {
                     HandleCommandResult::ResponseBufferUpdated(buffer) => {
                         Self::send_response(tx, &buffer, client_state.id()).await?;

@@ -186,6 +186,7 @@ pub enum ValkeyCommandName {
     // AuditLog commands
     AuditAppend,
     AuditRange,
+    AuditFeed,
     NotSupported(String),
 }
 
@@ -198,6 +199,7 @@ impl ValkeyCommandName {
         match self {
             ValkeyCommandName::AuditAppend => "audit.append".to_string(),
             ValkeyCommandName::AuditRange => "audit.range".to_string(),
+            ValkeyCommandName::AuditFeed => "audit.feed".to_string(),
             other => format!("{:?}", other).to_lowercase(),
         }
     }
@@ -1454,6 +1456,15 @@ impl Default for CommandsManager {
                     .with_arity(-2)
                     .with_first_key(1)
                     .with_last_key(1),
+            ),
+            (
+                "audit.feed",
+                CommandMetadata::new(ValkeyCommandName::AuditFeed)
+                    .read_only()
+                    .with_arity(-1)
+                    .with_first_key(0)
+                    .with_last_key(0)
+                    .with_step(0),
             ),
         ]);
 

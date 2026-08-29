@@ -127,6 +127,14 @@ impl AuditLog {
         self.md.incr_count();
     }
 
+    pub fn feed_seq(&self) -> u64 {
+        self.md.feed_seq()
+    }
+
+    pub fn set_feed_seq(&mut self, feed_seq: u64) {
+        self.md.set_feed_seq(feed_seq);
+    }
+
     pub fn encode_key(&self) -> BytesMut {
         self.key.to_bytes()
     }
@@ -158,6 +166,116 @@ impl AuditLog {
     }
 }
 
+/// An AuditLog lifecycle event: its container was either created (first entry
+/// appended for a task-id) or deleted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AuditFeedEventKind {
+    Created = 0,
+    Deleted = 1,
+}
+
+impl AuditFeedEventKind {
+    fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Created),
+            1 => Some(Self::Deleted),
+            _ => None,
+        }
+    }
+}
+
+/// One row in the AuditLog feed: `task_id`'s AuditLog was created or deleted, at
+/// `timestamp_ms`. The feed is a shard-local, chronologically ordered index (see
+/// `AuditFeedKey`) of these lifecycle events across *all* tasks, used to page through
+/// recent activity without knowing task-ids up front (see `AuditDb::feed`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuditFeedEntry {
+    pub timestamp_ms: u64,
+    pub kind: AuditFeedEventKind,
+    pub task_id: BytesMut,
+}
+
+impl ToU8Writer for AuditFeedEntry {
+    fn to_writer(&self, builder: &mut U8ArrayBuilder) {
+        self.timestamp_ms.to_writer(builder);
+        builder.write_u8(self.kind as u8);
+        builder.write_bytes(&self.task_id);
+    }
+}
+
+impl ToBytes for AuditFeedEntry {
+    fn to_bytes(&self) -> BytesMut {
+        let mut buffer = BytesMut::new();
+        let mut builder = U8ArrayBuilder::with_buffer(&mut buffer);
+        self.to_writer(&mut builder);
+        buffer
+    }
+}
+
+impl FromU8Reader for AuditFeedEntry {
+    type Item = AuditFeedEntry;
+    fn from_reader(reader: &mut U8ArrayReader) -> Option<Self::Item> {
+        Some(AuditFeedEntry {
+            timestamp_ms: u64::from_reader(reader)?,
+            kind: AuditFeedEventKind::from_u8(reader.read_u8()?)?,
+            task_id: reader.remaining()?,
+        })
+    }
+}
+
+impl FromBytes for AuditFeedEntry {
+    type Item = AuditFeedEntry;
+    fn from_bytes(bytes: &[u8]) -> Option<Self::Item> {
+        let mut reader = U8ArrayReader::with_buffer(bytes);
+        Self::from_reader(&mut reader)
+    }
+}
+
+/// Encodes a feed row's storage key: `<KeyType::AuditFeedItem><db_id><feed_seq>`.
+///
+/// Deliberately does *not* go through `KeyPrefix`/`PrimaryKeyMetadata` -- there is no
+/// per-task `slot` to partition by here: the feed spans every task-id in the database
+/// and is inherently shard-local (see `AuditDb::feed`'s docs), so it does not migrate
+/// with any single task's slot.
+///
+/// `feed_seq` comes from `StorageAdapter::generate_id()`, the same process-local
+/// monotonic counter used for `audit_log_id`s (and list/hash/... ids) -- it is *not*
+/// contiguous like a per-task sequence, so `AuditDb::feed`'s `from` cursor is
+/// implemented via seek-to-key, not position counting.
+struct AuditFeedKey {
+    db_id: u16,
+    feed_seq: u64,
+}
+
+impl AuditFeedKey {
+    /// The prefix shared by every feed row in `db_id` (no `feed_seq`).
+    fn type_prefix(db_id: u16) -> BytesMut {
+        let mut buffer = BytesMut::new();
+        let mut builder = U8ArrayBuilder::with_buffer(&mut buffer);
+        builder.write_key_type(KeyType::AuditFeedItem);
+        builder.write_u16(db_id);
+        buffer
+    }
+}
+
+impl ToU8Writer for AuditFeedKey {
+    fn to_writer(&self, builder: &mut U8ArrayBuilder) {
+        builder.write_key_type(KeyType::AuditFeedItem);
+        builder.write_u16(self.db_id);
+        builder.write_u64(self.feed_seq);
+    }
+}
+
+impl ToBytes for AuditFeedKey {
+    fn to_bytes(&self) -> BytesMut {
+        let mut buffer = BytesMut::new();
+        let mut builder = U8ArrayBuilder::with_buffer(&mut buffer);
+        self.to_writer(&mut builder);
+        buffer
+    }
+}
+
 //
 // Public enumerators
 //
@@ -178,6 +296,12 @@ pub enum AuditRangeResult {
     Some(Vec<AuditItemValue>),
 }
 
+#[derive(PartialEq, Eq, Debug)]
+pub enum AuditFeedResult {
+    /// Returns `(feed_seq, entry)` pairs, oldest first
+    Some(Vec<(u64, AuditFeedEntry)>),
+}
+
 // Internal enumerator
 #[derive(Debug, PartialEq, Eq)]
 enum GetAuditLogMetadataResult {
@@ -190,8 +314,9 @@ enum GetAuditLogMetadataResult {
 }
 
 /// AuditLog DB wrapper. This class is specialized in reading/writing an append-only,
-/// per-task audit trail. This is an internal storage-layer API -- it is not exposed as
-/// a RESP command; TASK.* command handlers (not yet implemented) call it directly.
+/// per-task audit trail. It's exposed to RESP clients via `AUDIT.APPEND`/`AUDIT.RANGE`/
+/// `AUDIT.FEED` (`commands/audit_commands.rs`) and `DEL` (for AuditLog keys, see
+/// `delete()`'s doc below); future TASK.* command handlers would also call it directly.
 ///
 /// Locking strategy: this class does not lock anything and relies on the caller
 /// to obtain the locks if needed
@@ -237,15 +362,75 @@ impl<'a> AuditDb<'a> {
         Ok(AuditAppendResult::Some(sequence))
     }
 
-    /// Delete `task_id`'s AuditLog container record. This does *not* delete the
-    /// individual entries -- they are left as orphans (same as an overwritten List or
-    /// Hash) and are reclaimed later by the Evictor's periodic sweep
-    /// (`server::cron_thread::Cron::evict`), which is registered for
+    /// Delete `task_id`'s AuditLog container record, if `task_id` currently holds an
+    /// AuditLog (a no-op otherwise -- including if it holds an unrelated type). This
+    /// does *not* delete the individual entries -- they are left as orphans (same as
+    /// an overwritten List or Hash) and are reclaimed later by the Evictor's periodic
+    /// sweep (`server::cron_thread::Cron::evict`), which is registered for
     /// `ValueType::AuditLog` / `KeyType::AuditItem`.
+    ///
+    /// The feed's `Created` row for this AuditLog is replaced with a `Deleted` row
+    /// (not left stale alongside it) -- see `AuditLogValueMetadata::feed_seq`'s doc.
+    ///
+    /// Note: the generic `DEL` RESP command routes here for keys holding an AuditLog
+    /// (see `GenericCommands::del` in `commands/generic_commands.rs`), so this is not
+    /// merely an internal-only path -- it is how `DEL task-id` behaves for an AuditLog
+    /// key.
     pub fn delete(&mut self, task_id: &BytesMut) -> Result<(), SableError> {
+        let audit_log = match self.audit_log_metadata(task_id)? {
+            GetAuditLogMetadataResult::NotFound | GetAuditLogMetadataResult::WrongType => {
+                return Ok(())
+            }
+            GetAuditLogMetadataResult::Some(audit_log) => audit_log,
+        };
+
         let internal_key = PrimaryKeyMetadata::new_primary_key(task_id, self.db_id);
         self.cache.delete(&internal_key)?;
+        self.delete_feed_entry(audit_log.feed_seq())?;
+        self.push_feed_entry(task_id, AuditFeedEventKind::Deleted)?;
         self.cache.flush()
+    }
+
+    /// Return feed entries (AuditLog create/delete lifecycle events across *all*
+    /// task-ids in this database), oldest first, starting at feed sequence `from`
+    /// (default `0`) and returning at most `limit` entries (default: unbounded).
+    ///
+    /// This index is shard-local: `feed_seq` comes from a process-local counter, so
+    /// entries from different SableDB nodes are not comparable or mergeable by
+    /// `feed_seq`. A caller polling multiple shards should track a cursor per shard and
+    /// merge results by each entry's `timestamp_ms` instead.
+    pub fn feed(&self, from: Option<u64>, limit: Option<usize>) -> Result<AuditFeedResult, SableError> {
+        let type_prefix = AuditFeedKey::type_prefix(self.db_id);
+        let start_key = AuditFeedKey {
+            db_id: self.db_id,
+            feed_seq: from.unwrap_or(0),
+        }
+        .to_bytes();
+        let limit = limit.unwrap_or(usize::MAX);
+
+        let mut result = Vec::<(u64, AuditFeedEntry)>::new();
+        let mut db_iter = self.store.create_iterator(&start_key)?;
+        while db_iter.valid() {
+            let Some((key, value)) = db_iter.key_value() else {
+                break;
+            };
+
+            if !key.starts_with(&type_prefix) {
+                break;
+            }
+
+            let mut reader = U8ArrayReader::with_buffer(key);
+            reader.advance(type_prefix.len())?;
+            let seq = reader.read_u64().ok_or(SableError::SerialisationError)?;
+
+            let entry = AuditFeedEntry::from_bytes(value).ok_or(SableError::SerialisationError)?;
+            result.push((seq, entry));
+            if result.len() >= limit {
+                break;
+            }
+            db_iter.next();
+        }
+        Ok(AuditFeedResult::Some(result))
     }
 
     /// Return entries for `task_id`, in append order, starting from sequence `from`
@@ -323,8 +508,7 @@ impl<'a> AuditDb<'a> {
             .with_audit_log_id(self.store.generate_id())
             .build();
         let key = PrimaryKeyMetadata::new(task_id, self.db_id);
-        let audit_log = AuditLog { key, md };
-        self.put_audit_log_metadata(&audit_log)?;
+        let mut audit_log = AuditLog { key, md };
 
         // Add a bookkeeping record so the orphan-eviction thread can clean up entries
         // if `task_id` is later overwritten by an unrelated type.
@@ -333,6 +517,13 @@ impl<'a> AuditDb<'a> {
             .with_value_type(ValueType::AuditLog)
             .to_bytes();
         self.cache.put(&bookkeeping_record, task_id.clone())?;
+
+        // Record this creation in the feed, and remember where, so `delete()` can
+        // replace this row (rather than leaving it stale) once the AuditLog is gone.
+        let feed_seq = self.push_feed_entry(task_id, AuditFeedEventKind::Created)?;
+        audit_log.set_feed_seq(feed_seq);
+
+        self.put_audit_log_metadata(&audit_log)?;
         Ok(audit_log)
     }
 
@@ -358,6 +549,43 @@ impl<'a> AuditDb<'a> {
             .put(&audit_log.encode_key(), audit_log.encode_value())?;
         Ok(())
     }
+
+    /// Append a `kind` feed row for `task_id`, timestamped now
+    /// Push a `kind` feed row for `task_id`, timestamped now, and return its
+    /// `feed_seq`
+    fn push_feed_entry(
+        &mut self,
+        task_id: &BytesMut,
+        kind: AuditFeedEventKind,
+    ) -> Result<u64, SableError> {
+        let feed_seq = self.store.generate_id();
+        let key = AuditFeedKey {
+            db_id: self.db_id,
+            feed_seq,
+        }
+        .to_bytes();
+        let entry = AuditFeedEntry {
+            timestamp_ms: TimeUtils::epoch_ms()?,
+            kind,
+            task_id: task_id.clone(),
+        };
+        self.cache.put(&key, entry.to_bytes())?;
+        Ok(feed_seq)
+    }
+
+    /// Delete the feed row at `feed_seq`, if `feed_seq != 0` (see
+    /// `AuditLogValueMetadata::feed_seq`'s doc for the `0` sentinel)
+    fn delete_feed_entry(&mut self, feed_seq: u64) -> Result<(), SableError> {
+        if feed_seq == 0 {
+            return Ok(());
+        }
+        let key = AuditFeedKey {
+            db_id: self.db_id,
+            feed_seq,
+        }
+        .to_bytes();
+        self.cache.delete(&key)
+    }
 }
 
 //  _    _ _   _ _____ _______      _______ ______  _____ _______ _____ _   _  _____
@@ -370,7 +598,8 @@ impl<'a> AuditDb<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{StorageAdapter, StorageOpenParams};
+    use crate::storage::{PutFlags, StorageAdapter, StorageOpenParams, StringGetResult, StringsDb};
+    use crate::StringValueMetadata;
     use std::path::PathBuf;
 
     fn entry(event: &str, details: &str) -> (BytesMut, BytesMut) {
@@ -453,6 +682,97 @@ mod tests {
             panic!("Expected AuditRangeResult::Some");
         };
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_feed_records_create_and_delete() {
+        let (_deleter, db) = crate::tests::open_store();
+        let mut audit_db = AuditDb::with_storage(&db, 0);
+
+        let task_a = BytesMut::from("task-a");
+        let task_b = BytesMut::from("task-b");
+
+        // Only the *first* append for a task should push a Created feed row
+        let (event, details) = entry("Created", "");
+        audit_db.append(&task_a, &event, &details).unwrap();
+        audit_db.append(&task_a, &event, &details).unwrap();
+        audit_db.append(&task_b, &event, &details).unwrap();
+
+        audit_db.delete(&task_a).unwrap();
+        // Deleting a task with no AuditLog is a no-op and must not push a feed row
+        audit_db.delete(&BytesMut::from("never-existed")).unwrap();
+
+        // task-a's stale `Created` row is replaced (not left alongside) its `Deleted`
+        // row, so the feed has 2 rows total, not 3.
+        let AuditFeedResult::Some(feed) = audit_db.feed(None, None).unwrap();
+        assert_eq!(feed.len(), 2);
+
+        let (_, e0) = &feed[0];
+        assert_eq!(e0.kind, AuditFeedEventKind::Created);
+        assert_eq!(e0.task_id, task_b);
+
+        let (_, e1) = &feed[1];
+        assert_eq!(e1.kind, AuditFeedEventKind::Deleted);
+        assert_eq!(e1.task_id, task_a);
+
+        // feed_seq values must be strictly increasing (append order)
+        assert!(feed[0].0 < feed[1].0);
+    }
+
+    #[test]
+    fn test_delete_is_noop_for_wrong_type() {
+        let (_deleter, db) = crate::tests::open_store();
+        let mut audit_db = AuditDb::with_storage(&db, 0);
+
+        let task_id = BytesMut::from("not-an-auditlog");
+        let (event, details) = entry("Created", "");
+        audit_db.append(&task_id, &event, &details).unwrap();
+
+        // overwrite the AuditLog's primary key with an unrelated type
+        let mut strings_db = StringsDb::with_storage(&db, 0);
+        strings_db
+            .put(
+                &task_id,
+                &BytesMut::from("a string value"),
+                &StringValueMetadata::default(),
+                PutFlags::Override,
+            )
+            .unwrap();
+
+        // delete() must leave the (now unrelated) key and the feed untouched
+        audit_db.delete(&task_id).unwrap();
+
+        let StringGetResult::Some((value, _)) = strings_db.get(&task_id).unwrap() else {
+            panic!("Expected the string value to still be present");
+        };
+        assert_eq!(value, BytesMut::from("a string value"));
+
+        let AuditFeedResult::Some(feed) = audit_db.feed(None, None).unwrap();
+        assert_eq!(feed.len(), 1);
+        assert_eq!(feed[0].1.kind, AuditFeedEventKind::Created);
+    }
+
+    #[test]
+    fn test_feed_from_and_limit() {
+        let (_deleter, db) = crate::tests::open_store();
+        let mut audit_db = AuditDb::with_storage(&db, 0);
+
+        let (event, details) = entry("Created", "");
+        for i in 0..5 {
+            let task_id = BytesMut::from(format!("task-{i}").as_str());
+            audit_db.append(&task_id, &event, &details).unwrap();
+        }
+
+        let AuditFeedResult::Some(all) = audit_db.feed(None, None).unwrap();
+        assert_eq!(all.len(), 5);
+
+        // Resume from the 3rd entry's own feed_seq: it (and everything after) should
+        // come back, nothing before it.
+        let cursor = all[2].0;
+        let AuditFeedResult::Some(page) = audit_db.feed(Some(cursor), Some(2)).unwrap();
+        assert_eq!(page.len(), 2);
+        assert_eq!(page[0].0, all[2].0);
+        assert_eq!(page[1].0, all[3].0);
     }
 
     /// AuditDb writes go through the same `DbWriteCache` -> RocksDB path as every other

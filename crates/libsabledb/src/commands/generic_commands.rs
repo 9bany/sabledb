@@ -4,7 +4,7 @@ use crate::{
     metadata::CommonValueMetadata,
     metadata::{KeyType, ValueType},
     server::ClientState,
-    storage::{GenericDb, ScanCursor},
+    storage::{AuditDb, GenericDb, ScanCursor},
     utils::{PatternMatcher, RespBuilderV2},
     BytesMutUtils, LockManager, PrimaryKeyMetadata, SableError, U8ArrayBuilder, ValkeyCommand,
     ValkeyCommandName,
@@ -54,6 +54,10 @@ impl GenericCommands {
 
     /// O(N) where N is the number of keys that will be removed. When a key to remove holds a value other than a string,
     /// the individual complexity remains O(1) and the deletion of the element keys is done in a background thread
+    ///
+    /// A key holding an AuditLog is routed to `AuditDb::delete` instead of the generic delete path, so its feed
+    /// bookkeeping (replacing the `Created` row with a `Deleted` row -- see `storage/audit_db.rs`) still happens; every
+    /// other type is unaffected.
     async fn del(
         client_state: Rc<ClientState>,
         command: Rc<ValkeyCommand>,
@@ -67,13 +71,21 @@ impl GenericCommands {
         let mut deleted_items = 0usize;
         let db_id = client_state.database_id();
         let mut generic_db = GenericDb::with_storage(client_state.database(), db_id);
+        let mut audit_db = AuditDb::with_storage(client_state.database(), db_id);
         for user_key in iter {
             // obtain the lock per key
             let _unused =
                 LockManager::lock(user_key, client_state.clone(), command.clone()).await?;
-            if generic_db.contains(user_key)? {
-                generic_db.delete(user_key, false)?;
-                deleted_items = deleted_items.saturating_add(1);
+            match generic_db.value_common_metadata(user_key)? {
+                Some(md) if md.is_audit_log() => {
+                    audit_db.delete(user_key)?;
+                    deleted_items = deleted_items.saturating_add(1);
+                }
+                Some(_) => {
+                    generic_db.delete(user_key, false)?;
+                    deleted_items = deleted_items.saturating_add(1);
+                }
+                None => {}
             }
         }
         generic_db.commit()?;

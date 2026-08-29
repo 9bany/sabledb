@@ -9,6 +9,11 @@ use crate::{
 pub struct AuditLogValueMetadata {
     common: CommonValueMetadata,
     count: u64,
+    /// The `feed_seq` of this AuditLog's most recent feed row (see
+    /// `storage::AuditFeedKey`), or `0` if none has been recorded yet.
+    /// `StorageAdapter::generate_id()` (the source of `feed_seq`) never returns `0`, so
+    /// `0` is a safe sentinel for "none".
+    feed_seq: u64,
 }
 
 #[derive(Default)]
@@ -28,13 +33,14 @@ impl AuditLogValueMetadataBuilder {
                 .set_audit_log()
                 .with_uid(self.audit_log_id),
             count: 0,
+            feed_seq: 0,
         }
     }
 }
 
 #[allow(dead_code)]
 impl AuditLogValueMetadata {
-    pub const SIZE: usize = std::mem::size_of::<u64>() + CommonValueMetadata::SIZE;
+    pub const SIZE: usize = 2 * std::mem::size_of::<u64>() + CommonValueMetadata::SIZE;
 
     pub fn builder() -> AuditLogValueMetadataBuilder {
         AuditLogValueMetadataBuilder::default()
@@ -44,6 +50,7 @@ impl AuditLogValueMetadata {
         AuditLogValueMetadata {
             common: CommonValueMetadata::default().set_audit_log().with_uid(0),
             count: 0,
+            feed_seq: 0,
         }
     }
 
@@ -51,12 +58,18 @@ impl AuditLogValueMetadata {
     pub fn to_bytes(&self, builder: &mut U8ArrayBuilder) {
         self.common.to_bytes(builder);
         builder.write_u64(self.count);
+        builder.write_u64(self.feed_seq);
     }
 
     pub fn from_bytes(reader: &mut U8ArrayReader) -> Result<Self, SableError> {
         let common = CommonValueMetadata::from_bytes(reader)?;
         let count = reader.read_u64().ok_or(SableError::SerialisationError)?;
-        Ok(AuditLogValueMetadata { common, count })
+        let feed_seq = reader.read_u64().ok_or(SableError::SerialisationError)?;
+        Ok(AuditLogValueMetadata {
+            common,
+            count,
+            feed_seq,
+        })
     }
 
     pub fn expiration(&self) -> &Expiration {
@@ -86,6 +99,14 @@ impl AuditLogValueMetadata {
     pub fn incr_count(&mut self) {
         self.count = self.count.saturating_add(1);
     }
+
+    pub fn feed_seq(&self) -> u64 {
+        self.feed_seq
+    }
+
+    pub fn set_feed_seq(&mut self, feed_seq: u64) {
+        self.feed_seq = feed_seq;
+    }
 }
 
 impl Default for AuditLogValueMetadata {
@@ -112,6 +133,7 @@ mod test {
         md.expiration_mut().set_ttl_millis(30)?;
         md.set_id(42);
         md.set_count(15);
+        md.set_feed_seq(99);
 
         let mut arr = bytes::BytesMut::with_capacity(AuditLogValueMetadata::SIZE);
         let mut builder = U8ArrayBuilder::with_buffer(&mut arr);
@@ -142,6 +164,7 @@ mod test {
         assert!(deserialized_md.expiration().is_expired()? == false);
         assert_eq!(deserialized_md.id(), 42);
         assert_eq!(deserialized_md.count(), 15);
+        assert_eq!(deserialized_md.feed_seq(), 99);
         assert_eq!(&arr[..], &[5, 5]);
         Ok(())
     }

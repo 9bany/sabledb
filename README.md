@@ -377,22 +377,40 @@ Entries are never individually deleted or reordered -- delete the whole trail wi
 `DEL` command, and its entries are reclaimed by the same background eviction mechanism used for
 overwritten Lists/Hashes/Sets/Zsets.
 
+Alongside each trail, `SableDB` also maintains a lightweight feed of AuditLog create/delete events
+across *all* task-ids, so a client can discover new activity without already knowing which task-ids
+to look at (e.g. to drive a live "activity feed" table view).
+
 The syntax is:
 
 ```
 AUDIT.APPEND <task-id> <event> [<details>]
 AUDIT.RANGE <task-id> [FROM <seq>] [LIMIT <n>]
+AUDIT.FEED [FROM <seq>] [LIMIT <n>]
 ```
 
 - `AUDIT.APPEND` appends a new entry and returns its sequence number (`0`-based, per `task-id`).
 - `AUDIT.RANGE` returns entries in append order, each as `[sequence, timestamp_ms, event, details]`,
   starting at sequence `FROM` (default `0`) and returning at most `LIMIT` entries (default: unbounded).
-- To delete a trail, use `DEL <task-id>`.
+- `AUDIT.FEED` returns `[sequence, timestamp_ms, kind, task-id]` rows (`kind` is `created` or
+  `deleted`), oldest first, starting at feed sequence `FROM` (default `0`) and returning at most
+  `LIMIT` rows (default: unbounded). This feed is **shard-local**: `sequence` comes from a
+  per-node counter, so it is only meaningful for paging one shard's feed, not for merging feeds
+  from different nodes -- a client polling a cluster should discover shards via `CLUSTER NODES`,
+  track a cursor per shard, and merge by `timestamp_ms` instead. A task's `created` row is replaced
+  by its `deleted` row when the trail is deleted (not left alongside it), so the feed only grows
+  without bound for trails that are created and never deleted -- there is still no eviction or
+  retention policy for that portion.
+- To delete a trail, use `DEL <task-id>`. `DEL` detects when a key holds an AuditLog and routes it
+  through the same path `AuditDb::delete()` uses internally, so the `AUDIT.FEED` bookkeeping above
+  (replacing the `created` row with a `deleted` row) still happens -- deleting an AuditLog isn't
+  special-cased at the protocol level, just under the hood.
 
 | Command  | Supported  | Fully supported?  | Comment  |
 |---|---|---|---|
 | AUDIT.APPEND | ✓ |✓ | |
 | AUDIT.RANGE | ✓ |✓ | |
+| AUDIT.FEED | ✓ |✓ | Shard-local; no retention/eviction policy yet |
 
 ## Benchmarks
 

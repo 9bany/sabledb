@@ -94,6 +94,10 @@ pub enum KeyType {
     DeleteRange = 9,
     /// AuditLog entry item
     AuditItem = 10,
+    /// AuditLog feed item: a shard-local, chronologically ordered index of AuditLog
+    /// create/delete lifecycle events, used to page through recent activity across all
+    /// tasks (see `AUDIT.FEED`)
+    AuditFeedItem = 11,
 }
 
 impl crate::FromU8Reader for KeyType {
@@ -124,6 +128,7 @@ impl FromRaw for KeyType {
             8 => Some(Self::Lock),
             9 => Some(Self::DeleteRange),
             10 => Some(Self::AuditItem),
+            11 => Some(Self::AuditFeedItem),
             _ => None,
         }
     }
