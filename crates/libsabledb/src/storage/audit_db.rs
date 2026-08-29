@@ -237,6 +237,17 @@ impl<'a> AuditDb<'a> {
         Ok(AuditAppendResult::Some(sequence))
     }
 
+    /// Delete `task_id`'s AuditLog container record. This does *not* delete the
+    /// individual entries -- they are left as orphans (same as an overwritten List or
+    /// Hash) and are reclaimed later by the Evictor's periodic sweep
+    /// (`server::cron_thread::Cron::evict`), which is registered for
+    /// `ValueType::AuditLog` / `KeyType::AuditItem`.
+    pub fn delete(&mut self, task_id: &BytesMut) -> Result<(), SableError> {
+        let internal_key = PrimaryKeyMetadata::new_primary_key(task_id, self.db_id);
+        self.cache.delete(&internal_key)?;
+        self.cache.flush()
+    }
+
     /// Return entries for `task_id`, in append order, starting from sequence `from`
     /// (default `0`) and returning at most `limit` entries (default: 100).
     pub fn range(

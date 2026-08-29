@@ -292,6 +292,7 @@ impl Cron {
                 vec![KeyType::ZsetMemberItem, KeyType::ZsetScoreItem],
             ),
             (ValueType::Set, vec![KeyType::SetItem]),
+            (ValueType::AuditLog, vec![KeyType::AuditItem]),
         ];
 
         let mut items_evicted = 0usize;
@@ -529,9 +530,45 @@ impl Cron {
 mod tests {
     use super::*;
     use crate::storage::{
-        PutFlags, SetDb, SetExistsResult, SetLenResult, StringsDb, ZSetAddMemberResult, ZSetDb,
-        ZSetLenResult, ZWriteFlags,
+        AuditAppendResult, AuditDb, AuditRangeResult, PutFlags, SetDb, SetExistsResult,
+        SetLenResult, StringsDb, ZSetAddMemberResult, ZSetDb, ZSetLenResult, ZWriteFlags,
     };
+
+    #[test]
+    fn test_eviction_of_audit_log_records() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async move {
+            let (_deleter, db) = crate::tests::open_store();
+            let mut audit_db = AuditDb::with_storage(&db, 0);
+
+            let task_id = BytesMut::from("task-1");
+            for i in 0..5 {
+                let event = BytesMut::from(format!("event_{i}").as_str());
+                let details = BytesMut::default();
+                assert_eq!(
+                    audit_db.append(&task_id, &event, &details).unwrap(),
+                    AuditAppendResult::Some(i)
+                );
+            }
+
+            let AuditRangeResult::Some(entries) = audit_db.range(&task_id, None, None).unwrap()
+            else {
+                panic!("Expected AuditRangeResult::Some");
+            };
+            assert_eq!(entries.len(), 5);
+
+            // Deleting the container leaves the 5 entry rows as orphans
+            audit_db.delete(&task_id).unwrap();
+            let AuditRangeResult::Some(entries) = audit_db.range(&task_id, None, None).unwrap()
+            else {
+                panic!("Expected AuditRangeResult::Some");
+            };
+            assert!(entries.is_empty());
+
+            let items_evicted = Cron::evict(&db, false).await.unwrap();
+            assert_eq!(items_evicted, 5);
+        });
+    }
 
     #[test]
     fn test_eviction_of_zset_records() {
