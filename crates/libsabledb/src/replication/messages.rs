@@ -136,8 +136,9 @@ pub enum NodeResponse {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum ResponseReason {
+    #[default]
     Invalid,
     /// Replication requested for "changes" without doing fullsync first
     NoFullSyncDone,
@@ -145,12 +146,6 @@ pub enum ResponseReason {
     CreatingUpdatesSinceError,
     /// No changes available
     NoChangesAvailable,
-}
-
-impl Default for ResponseReason {
-    fn default() -> Self {
-        Self::Invalid
-    }
 }
 
 impl std::fmt::Display for NodeTalkRequest {

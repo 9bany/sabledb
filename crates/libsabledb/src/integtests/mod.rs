@@ -10,10 +10,7 @@ use std::path::PathBuf;
 pub fn findup(name: &str) -> Result<Option<PathBuf>, SableError> {
     let mut curdir = std::env::current_dir()?;
 
-    loop {
-        let Some(curdir_str) = curdir.to_str() else {
-            break;
-        };
+    while let Some(curdir_str) = curdir.to_str() {
         let fullpath = PathBuf::from(format!("{}/{}", curdir_str, name));
         if fullpath.exists() {
             return Ok(Some(PathBuf::from(curdir_str)));

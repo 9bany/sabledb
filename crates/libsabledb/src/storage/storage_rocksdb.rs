@@ -96,11 +96,17 @@ impl StorageRocksDb {
         options.set_max_background_jobs(open_params.rocksdb.max_background_jobs as i32);
         options.set_manual_wal_flush(open_params.rocksdb.manual_wal_flush);
 
-        if open_params.rocksdb.bloom_filter_bits_per_key > 0 {
-            let mut opts = rocksdb::BlockBasedOptions::default();
-            opts.set_bloom_filter(open_params.rocksdb.bloom_filter_bits_per_key as f64, true);
-            options.set_block_based_table_factory(&opts);
+        let mut opts = rocksdb::BlockBasedOptions::default();
+        if open_params.rocksdb.block_cache_size > 0 {
+            let cache = rocksdb::Cache::new_lru_cache(open_params.rocksdb.block_cache_size);
+            opts.set_block_cache(&cache);
+        } else {
+            opts.disable_cache();
         }
+        if open_params.rocksdb.bloom_filter_bits_per_key > 0 {
+            opts.set_bloom_filter(open_params.rocksdb.bloom_filter_bits_per_key as f64, true);
+        }
+        options.set_block_based_table_factory(&opts);
 
         options.set_compression_type(if open_params.rocksdb.compression_enabled {
             rocksdb::DBCompressionType::Snappy

@@ -391,6 +391,12 @@ impl ServerOptions {
         Self::read_usize_with_unit(
             &ini_file,
             "rocksdb",
+            "block_cache_size",
+            &mut options.open_params.rocksdb.block_cache_size,
+        )?;
+        Self::read_usize_with_unit(
+            &ini_file,
+            "rocksdb",
             "wal_ttl_seconds",
             &mut options.open_params.rocksdb.wal_ttl_seconds,
         )?;
@@ -743,6 +749,19 @@ mod tests {
         assert_eq!(
             opts.general_settings.private_address,
             "private:1234".to_string()
+        );
+    }
+
+    #[test]
+    fn reads_block_cache_size_with_units() {
+        let config = crate::io::TempFile::with_name("block_cache_options");
+        std::fs::write(config.fullpath(), "[rocksdb]\nblock_cache_size = 512MB\n").unwrap();
+
+        let options = ServerOptions::from_config(config.fullpath().clone()).unwrap();
+
+        assert_eq!(
+            options.open_params.rocksdb.block_cache_size,
+            512 * 1024 * 1024
         );
     }
 }

@@ -196,11 +196,9 @@ fn print_response_pretty(value: &Value, indent: usize, seq: Option<usize>) {
                 println_value("(empty array)");
             } else {
                 print_sequence(seq);
-                let mut new_seq = 1usize;
-                for val in values.iter() {
+                for (new_seq, val) in (1usize..).zip(values.iter()) {
                     print_indent(indent);
                     print_response_pretty(val, indent + 4, Some(new_seq));
-                    new_seq += 1;
                 }
             }
         }
@@ -229,10 +227,8 @@ fn print_response_pretty(value: &Value, indent: usize, seq: Option<usize>) {
         Value::Push { kind, data } => {
             print_sequence(seq);
             println_value(kind);
-            let mut new_seq = 1usize;
-            for v in data {
+            for (new_seq, v) in (1usize..).zip(data.iter()) {
                 print_response_pretty(v, indent + 4, Some(new_seq));
-                new_seq += 1;
             }
         }
         Value::Attribute { data, attributes } => {

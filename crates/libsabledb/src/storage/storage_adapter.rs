@@ -51,6 +51,12 @@ pub struct RocksDbParams {
     ///
     /// Default: 256MB
     pub write_buffer_size: usize,
+    /// Memory reserved for RocksDB's shared block cache. Point lookups that miss
+    /// this cache must read an SST block from the backing volume, so an explicit
+    /// bound is important for both predictable latency and predictable memory.
+    ///
+    /// Default: 8MB (the RocksDB implicit default)
+    pub block_cache_size: usize,
     /// If `wal_ttl_seconds` is not 0, then
     /// WAL files will be checked every `wal_ttl_seconds / 2` and those that
     /// are older than `wal_ttl_seconds` will be deleted.
@@ -120,6 +126,7 @@ impl Default for StorageOpenParams {
                 max_background_jobs: 8,
                 max_write_buffer_number: 4,
                 write_buffer_size: 256usize.saturating_mul(1024).saturating_mul(1024),
+                block_cache_size: 8usize.saturating_mul(1024).saturating_mul(1024),
                 wal_ttl_seconds: 3600,
                 compression_enabled: true,
                 disable_wal: false,

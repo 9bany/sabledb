@@ -8,20 +8,15 @@ pub trait FromRaw {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy, Default)]
 pub enum ValueType {
+    #[default]
     Str = 0,
     List = 1,
     Hash = 2,
     Zset = 3,
     Set = 4,
     Lock = 5,
-}
-
-impl Default for ValueType {
-    fn default() -> Self {
-        Self::Str
-    }
 }
 
 impl crate::FromU8Reader for ValueType {
@@ -78,10 +73,11 @@ impl From<&bytes::BytesMut> for ValueType {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, PartialEq, Eq, Copy, enum_iterator::Sequence)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy, enum_iterator::Sequence, Default)]
 pub enum KeyType {
     /// Used internally to track all complex records
     Bookkeeping = 0,
+    #[default]
     PrimaryKey = 1,
     ListItem = 2,
     HashItem = 3,
@@ -93,12 +89,6 @@ pub enum KeyType {
     Lock = 8,
     /// Custom delete_range marker
     DeleteRange = 9,
-}
-
-impl Default for KeyType {
-    fn default() -> Self {
-        Self::PrimaryKey
-    }
 }
 
 impl crate::FromU8Reader for KeyType {
