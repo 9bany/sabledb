@@ -1,3 +1,4 @@
+mod audit_db;
 mod generic_db;
 mod hash_db;
 mod limits;
@@ -14,6 +15,7 @@ mod zset_db;
 
 pub use crate::replication::{StorageUpdates, StorageUpdatesRecord};
 pub use crate::storage::storage_adapter::*;
+pub use audit_db::*;
 pub use generic_db::GenericDb;
 pub use hash_db::{
     FindHashResult, HashDb, HashDeleteResult, HashExistsResult, HashGetMultiResult, HashGetResult,

@@ -81,6 +81,10 @@ impl CommonValueMetadata {
         self.value_encoding == ValueType::Zset
     }
 
+    pub fn is_audit_log(&self) -> bool {
+        self.value_encoding == ValueType::AuditLog
+    }
+
     pub fn value_type(&self) -> ValueType {
         self.value_encoding
     }
@@ -112,6 +116,11 @@ impl CommonValueMetadata {
 
     pub fn set_zset(mut self) -> Self {
         self.value_encoding = ValueType::Zset;
+        self
+    }
+
+    pub fn set_audit_log(mut self) -> Self {
+        self.value_encoding = ValueType::AuditLog;
         self
     }
 

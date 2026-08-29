@@ -17,6 +17,7 @@ pub enum ValueType {
     Zset = 3,
     Set = 4,
     Lock = 5,
+    AuditLog = 6,
 }
 
 impl crate::FromU8Reader for ValueType {
@@ -42,6 +43,7 @@ impl FromRaw for ValueType {
             3 => Some(Self::Zset),
             4 => Some(Self::Set),
             5 => Some(Self::Lock),
+            6 => Some(Self::AuditLog),
             _ => None,
         }
     }
@@ -57,6 +59,7 @@ impl FromStr for ValueType {
             "set" => Ok(Self::Set),
             "zset" => Ok(Self::Zset),
             "lock" => Ok(Self::Lock),
+            "auditlog" => Ok(Self::AuditLog),
             _ => Err(crate::SableError::InvalidArgument(format!(
                 "Could not convert '{}' into ValueType",
                 s
@@ -89,6 +92,8 @@ pub enum KeyType {
     Lock = 8,
     /// Custom delete_range marker
     DeleteRange = 9,
+    /// AuditLog entry item
+    AuditItem = 10,
 }
 
 impl crate::FromU8Reader for KeyType {
@@ -118,6 +123,7 @@ impl FromRaw for KeyType {
             7 => Some(Self::Metadata),
             8 => Some(Self::Lock),
             9 => Some(Self::DeleteRange),
+            10 => Some(Self::AuditItem),
             _ => None,
         }
     }

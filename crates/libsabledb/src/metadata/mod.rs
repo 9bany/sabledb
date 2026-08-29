@@ -1,3 +1,4 @@
+mod audit_metadata;
 mod bookkeeping;
 mod delete_range;
 mod encoding;
@@ -12,6 +13,7 @@ mod string_value_metadata;
 mod value_metadata;
 mod zset_metadata;
 
+pub use audit_metadata::AuditLogValueMetadata;
 pub use bookkeeping::*;
 pub use encoding::*;
 pub use expiration::Expiration;
