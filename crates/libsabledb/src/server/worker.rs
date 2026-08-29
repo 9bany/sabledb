@@ -3,7 +3,7 @@ use num_format::{Locale, ToFormattedString};
 use rand::RngExt;
 use std::net::TcpStream;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 #[allow(unused_imports)]
 use tracing::log::{log_enabled, Level};
@@ -22,6 +22,49 @@ pub enum WorkerMessage {
 lazy_static::lazy_static! {
     static ref LAST_WAL_FLUSH: AtomicU64
         = AtomicU64::new(TimeUtils::epoch_ms().expect("failed to get timestamp"));
+}
+
+static WAL_FLUSH_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+struct WalFlushInProgressGuard<'a> {
+    in_progress: &'a AtomicBool,
+}
+
+impl Drop for WalFlushInProgressGuard<'_> {
+    fn drop(&mut self) {
+        self.in_progress.store(false, Ordering::Release);
+    }
+}
+
+fn claim_wal_flush(
+    last_flush: &AtomicU64,
+    in_progress: &AtomicBool,
+    current_timestamp: u64,
+    interval: u64,
+) -> bool {
+    let previous_timestamp = last_flush.load(Ordering::Acquire);
+    if current_timestamp.saturating_sub(previous_timestamp) <= interval {
+        return false;
+    }
+    if in_progress
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return false;
+    }
+    if last_flush
+        .compare_exchange(
+            previous_timestamp,
+            current_timestamp,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .is_err()
+    {
+        in_progress.store(false, Ordering::Release);
+        return false;
+    }
+    true
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -288,16 +331,27 @@ impl Worker {
             *last_merge = cur_ts;
         }
 
-        // This method ("tick") is called per worker thread, so in order to avoid
-        // too many flush calls, we use static atomic variable to store the last
-        // flush timestamp
-        let last_wal_flush = LAST_WAL_FLUSH.load(Ordering::Relaxed);
-        if cur_ts.saturating_sub(last_wal_flush) > wal_flush_interval {
-            // update the last flush timestamp
-            LAST_WAL_FLUSH.store(cur_ts, Ordering::Relaxed);
-            if let Err(e) = self.store.flush_wal() {
-                crate::error_with_throttling!(300, "Failed to flush WAL. {:?}", e);
-            }
+        // RocksDB's WAL flush may block on durable storage for hundreds of
+        // milliseconds. Running it on this current-thread runtime stalls every
+        // client assigned to the worker and turns the durability cadence into a
+        // bimodal request-latency tail. Claim one process-wide flush and detach
+        // the blocking work from request workers. The guard prevents overlap;
+        // when a slow flush exceeds the interval, the next tick catches up.
+        if claim_wal_flush(
+            &LAST_WAL_FLUSH,
+            &WAL_FLUSH_IN_PROGRESS,
+            cur_ts,
+            wal_flush_interval,
+        ) {
+            let store = self.store.clone();
+            tokio::task::spawn_blocking(move || {
+                let _guard = WalFlushInProgressGuard {
+                    in_progress: &WAL_FLUSH_IN_PROGRESS,
+                };
+                if let Err(e) = store.flush_wal() {
+                    crate::error_with_throttling!(300, "Failed to flush WAL. {:?}", e);
+                }
+            });
         }
     }
 
@@ -324,5 +378,53 @@ impl Worker {
         });
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::claim_wal_flush;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Arc, Barrier};
+
+    #[test]
+    fn wal_flush_claim_enforces_interval_and_excludes_overlap() {
+        let last_flush = AtomicU64::new(1_000);
+        let in_progress = AtomicBool::new(false);
+
+        assert!(!claim_wal_flush(&last_flush, &in_progress, 1_250, 250));
+        assert!(claim_wal_flush(&last_flush, &in_progress, 1_251, 250));
+        assert_eq!(last_flush.load(Ordering::Acquire), 1_251);
+        assert!(in_progress.load(Ordering::Acquire));
+        assert!(!claim_wal_flush(&last_flush, &in_progress, 2_000, 250));
+
+        in_progress.store(false, Ordering::Release);
+        assert!(!claim_wal_flush(&last_flush, &in_progress, 1_501, 250));
+        assert!(claim_wal_flush(&last_flush, &in_progress, 1_502, 250));
+    }
+
+    #[test]
+    fn wal_flush_claim_allows_only_one_concurrent_worker() {
+        let last_flush = Arc::new(AtomicU64::new(1_000));
+        let in_progress = Arc::new(AtomicBool::new(false));
+        let barrier = Arc::new(Barrier::new(8));
+        let mut handles = Vec::new();
+
+        for _ in 0..8 {
+            let last_flush = Arc::clone(&last_flush);
+            let in_progress = Arc::clone(&in_progress);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                claim_wal_flush(&last_flush, &in_progress, 2_000, 250)
+            }));
+        }
+
+        let claims = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("claim thread should not panic"))
+            .filter(|claimed| *claimed)
+            .count();
+        assert_eq!(claims, 1);
     }
 }

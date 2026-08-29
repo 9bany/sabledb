@@ -1,5 +1,5 @@
 use crate::SableError;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub struct FileResponseSink {
     temp_file: crate::io::TempFile,
@@ -24,7 +24,7 @@ impl FileResponseSink {
     }
 
     pub async fn read_all_with_size(&mut self, size: usize) -> Result<bytes::BytesMut, SableError> {
-        self.fp.sync_data().await?;
+        self.fp.flush().await?;
         let mut fp = tokio::fs::File::open(&self.temp_file.fullpath()).await?;
 
         let mut buffer = bytes::BytesMut::with_capacity(size);
