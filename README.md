@@ -113,6 +113,7 @@ docker exec -it sabledb-sabledb-1 /bin/bash -c "tail -f /var/lib/sabledb/log/sab
 - Use the `sb` command line utility (`target/release/sb`) for performance testing
 - Transactions ( `MULTI` / `EXEC` )
 - Auto-failover & recovery
+- Append-only audit trails ( `AUDIT.APPEND` / `AUDIT.RANGE` )
 
 ## Benchmark tool - `sb`
 
@@ -367,6 +368,31 @@ UNLOCK <LOCK-NAME>
 |---|---|---|---|
 | LOCK | ✓ |✓ | If timeout is provided, this is a blocking command |
 | UNLOCK | ✓ |✓ | |
+
+### AuditLog commands
+
+`SableDB` provides an append-only, per-key audit trail: a building block for future higher-level
+features (e.g. a task-coordination layer) that need a persisted, ordered history of events.
+Entries are never individually deleted or reordered -- delete the whole trail with the generic
+`DEL` command, and its entries are reclaimed by the same background eviction mechanism used for
+overwritten Lists/Hashes/Sets/Zsets.
+
+The syntax is:
+
+```
+AUDIT.APPEND <task-id> <event> [<details>]
+AUDIT.RANGE <task-id> [FROM <seq>] [LIMIT <n>]
+```
+
+- `AUDIT.APPEND` appends a new entry and returns its sequence number (`0`-based, per `task-id`).
+- `AUDIT.RANGE` returns entries in append order, each as `[sequence, timestamp_ms, event, details]`,
+  starting at sequence `FROM` (default `0`) and returning at most `LIMIT` entries (default: unbounded).
+- To delete a trail, use `DEL <task-id>`.
+
+| Command  | Supported  | Fully supported?  | Comment  |
+|---|---|---|---|
+| AUDIT.APPEND | ✓ |✓ | |
+| AUDIT.RANGE | ✓ |✓ | |
 
 ## Benchmarks
 
