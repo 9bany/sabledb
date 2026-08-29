@@ -145,9 +145,8 @@ impl StorageRocksDb {
         match put_flags {
             PutFlags::Override => {
                 Telemetry::inc_total_io_write_calls();
-                let _ = self
-                    .store
-                    .put_opt(key.clone(), value.clone(), &self.write_opts);
+                self.store
+                    .put_opt(key.clone(), value.clone(), &self.write_opts)?;
             }
             PutFlags::PutIfNotExists => {
                 Telemetry::inc_total_io_read_calls();
@@ -157,9 +156,8 @@ impl StorageRocksDb {
                     return Ok(());
                 }
                 Telemetry::inc_total_io_write_calls();
-                let _ = self
-                    .store
-                    .put_opt(key.clone(), value.clone(), &self.write_opts);
+                self.store
+                    .put_opt(key.clone(), value.clone(), &self.write_opts)?;
             }
             PutFlags::PutIfExists => {
                 Telemetry::inc_total_io_read_calls();
@@ -169,9 +167,8 @@ impl StorageRocksDb {
                     return Ok(());
                 }
                 Telemetry::inc_total_io_write_calls();
-                let _ = self
-                    .store
-                    .put_opt(key.clone(), value.clone(), &self.write_opts);
+                self.store
+                    .put_opt(key.clone(), value.clone(), &self.write_opts)?;
             }
         }
         Ok(())
