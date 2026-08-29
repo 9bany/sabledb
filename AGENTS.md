@@ -122,7 +122,11 @@ secondary index that spans *all* instances of a type (not just one task-id's own
   `AtomicU64` seeded from nanosecond boot time (`storage_adapter.rs:147-149`) -- the same generator
   used for `audit_log_id`/list/hash/... ids. It is sparse (not contiguous per-index), so a `FROM`
   cursor must seek directly to the target key (`create_iterator(&start_key)`, which seeks) rather
-  than counting positions the way `AuditDb::range`'s per-task, contiguous sequence does.
+  than count positions from the start. `AuditDb::range()` does the same seek-to-`FROM`-key trick
+  (via `AuditItemKey::new(&audit_log, from).to_bytes()`) even though its own per-task sequence *is*
+  contiguous -- seeking is strictly better than counting regardless, since it makes the command
+  `O(LIMIT)` instead of `O(FROM + LIMIT)`. Prefer seeking to a computed start key over
+  counting-while-iterating for any future cursor, even where the sequence happens to be dense.
 - Because the counter is per-process, this kind of index is only self-consistent **within one
   shard**. It cannot be used to merge/order entries across nodes in a cluster -- do that at the
   client/coordinator layer instead, by timestamp, using `CLUSTER NODES` for shard discovery.

@@ -453,9 +453,14 @@ impl<'a> AuditDb<'a> {
         let limit = limit.unwrap_or(100);
         let prefix = audit_log.item_prefix();
 
+        // Seek directly to the `from` sequence's own key instead of scanning from
+        // sequence 0 and discarding entries before it -- sequences are contiguous, so
+        // AuditItemKey::new(&audit_log, from) is exactly where iteration should start.
+        // This makes `range()` O(limit) instead of O(from + limit).
+        let start_key = AuditItemKey::new(&audit_log, from).to_bytes();
+
         let mut result = Vec::<AuditItemValue>::new();
-        let mut sequence = 0u64;
-        let mut db_iter = self.store.create_iterator(&prefix)?;
+        let mut db_iter = self.store.create_iterator(&start_key)?;
         while db_iter.valid() {
             let Some((key, value)) = db_iter.key_value() else {
                 break;
@@ -465,15 +470,11 @@ impl<'a> AuditDb<'a> {
                 break;
             }
 
-            if sequence >= from {
-                let entry =
-                    AuditItemValue::from_bytes(value).ok_or(SableError::SerialisationError)?;
-                result.push(entry);
-                if result.len() >= limit {
-                    break;
-                }
+            let entry = AuditItemValue::from_bytes(value).ok_or(SableError::SerialisationError)?;
+            result.push(entry);
+            if result.len() >= limit {
+                break;
             }
-            sequence = sequence.saturating_add(1);
             db_iter.next();
         }
         Ok(AuditRangeResult::Some(result))

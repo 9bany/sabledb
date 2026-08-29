@@ -391,7 +391,7 @@ AUDIT.FEED [FROM <seq>] [LIMIT <n>]
 
 - `AUDIT.APPEND` appends a new entry and returns its sequence number (`0`-based, per `task-id`).
 - `AUDIT.RANGE` returns entries in append order, each as `[sequence, timestamp_ms, event, details]`,
-  starting at sequence `FROM` (default `0`) and returning at most `LIMIT` entries (default: unbounded).
+  starting at sequence `FROM` (default `0`) and returning at most `LIMIT` entries (default `100`).
 - `AUDIT.FEED` returns `[sequence, timestamp_ms, kind, task-id]` rows (`kind` is `created` or
   `deleted`), oldest first, starting at feed sequence `FROM` (default `0`) and returning at most
   `LIMIT` rows (default: unbounded). This feed is **shard-local**: `sequence` comes from a
@@ -405,6 +405,15 @@ AUDIT.FEED [FROM <seq>] [LIMIT <n>]
   through the same path `AuditDb::delete()` uses internally, so the `AUDIT.FEED` bookkeeping above
   (replacing the `created` row with a `deleted` row) still happens -- deleting an AuditLog isn't
   special-cased at the protocol level, just under the hood.
+
+**Time complexity**
+
+| Command | Complexity | Notes |
+|---|---|---|
+| `AUDIT.APPEND` | `O(1)` | One metadata read, one entry write; on a task's *first* append only, one extra Bookkeeping write and one extra feed-index write. |
+| `AUDIT.RANGE` | `O(LIMIT)` | Seeks directly to `FROM`'s own key rather than scanning from the start of the trail, so cost does not grow with how far into the trail `FROM` points -- only with how many entries are actually returned. |
+| `AUDIT.FEED` | `O(LIMIT)` | Same reasoning as `AUDIT.RANGE`: `FROM` seeks directly to the target row instead of scanning the feed from the beginning. |
+| `DEL` (AuditLog key) | `O(1)` | Deleting the container and swapping the feed row (deleting the old one, writing the new one) are both direct key operations by a stored key, not a scan. The trail's individual entries are **not** deleted synchronously -- they're left as orphans and reclaimed later by the background eviction sweep (`O(total orphaned entries)` at that point, off the request path). |
 
 | Command  | Supported  | Fully supported?  | Comment  |
 |---|---|---|---|
