@@ -611,6 +611,7 @@ pub enum ClientNextAction {
     NoAction,
 }
 
+mod audit_commands;
 mod base_commands;
 mod client_commands;
 mod cluster_commands;
@@ -628,6 +629,7 @@ mod transaction_commands;
 mod zset_commands;
 
 pub use crate::commands::strings::Strings;
+pub use audit_commands::AuditCommands;
 pub use base_commands::BaseCommands;
 pub use client_commands::ClientCommands;
 pub use cluster_commands::ClusterCommands;

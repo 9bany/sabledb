@@ -151,9 +151,18 @@ impl RespResponseParserV2 {
                     )));
                 };
 
-                if strlen <= 0 {
-                    // Null or empty string
+                if strlen < 0 {
+                    // Null string (`$-1\r\n`) -- there is no content or trailing CRLF to consume
                     Ok(ResponseParseResult::Ok((consume, ValkeyObject::NullString)))
+                } else if strlen == 0 {
+                    // Empty string (`$0\r\n\r\n`) -- still need to consume the trailing CRLF
+                    // that follows the (empty) content
+                    let buffer = &buffer[crlf_pos + 2..];
+                    if buffer.len() < 2 {
+                        return Ok(ResponseParseResult::NeedMoreData);
+                    }
+                    consume = consume.saturating_add(2);
+                    Ok(ResponseParseResult::Ok((consume, ValkeyObject::Str(BytesMut::new()))))
                 } else {
                     let strlen = strlen as usize;
                     // read the string content
@@ -247,6 +256,18 @@ mod tests {
         ValkeyObject::Error(BytesMut::from("ERR bad thing happened"))
     ; "parse err message")]
     #[test_case(b":42\r\n", ValkeyObject::Integer(42); "parse integer")]
+    #[test_case(b"$0\r\n\r\n",
+        ValkeyObject::Str(BytesMut::new())
+    ; "parse empty bulk string")]
+    #[test_case(b"$-1\r\n",
+        ValkeyObject::NullString
+    ; "parse null bulk string")]
+    #[test_case(b"*2\r\n$0\r\n\r\n$5\r\nvalue\r\n",
+        ValkeyObject::Array(vec![
+            ValkeyObject::Str(BytesMut::new()),
+            ValkeyObject::Str(BytesMut::from("value")),
+        ])
+    ; "parse array with empty bulk string followed by another element")]
     fn test_happy_response_parser(
         buffer: &[u8],
         expected_response: ValkeyObject,

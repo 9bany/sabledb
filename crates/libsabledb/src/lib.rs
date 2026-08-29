@@ -9,8 +9,8 @@ pub mod storage;
 pub mod utils;
 
 pub use commands::{
-    ClientCommands, ClusterCommands, GenericCommands, HashCommands, ListCommands, LockCommands,
-    ServerCommands, SetCommands, StringCommands, TransactionCommands, ValkeyCommand,
+    AuditCommands, ClientCommands, ClusterCommands, GenericCommands, HashCommands, ListCommands,
+    LockCommands, ServerCommands, SetCommands, StringCommands, TransactionCommands, ValkeyCommand,
     ValkeyCommandName, ZSetCommands,
 };
 pub use metadata::{CommonValueMetadata, Expiration, PrimaryKeyMetadata, StringValueMetadata};

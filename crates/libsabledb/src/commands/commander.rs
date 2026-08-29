@@ -30,7 +30,7 @@ pub enum ValkeyCommandFlags {
     MultiKey = 1 << 6,
 }
 
-#[derive(Clone, Debug, Default, EnumString, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum ValkeyCommandName {
     // String commands
     Append,
@@ -183,7 +183,24 @@ pub enum ValkeyCommandName {
     Unlock,
     // Cluster commands
     Cluster,
+    // AuditLog commands
+    AuditAppend,
+    AuditRange,
     NotSupported(String),
+}
+
+impl ValkeyCommandName {
+    /// The wire name used in `COMMAND` / `COMMAND DOCS` output. Defaults to the
+    /// lowercased `Debug` name, which matches the dispatch-table key (see
+    /// `CommandsManager::default`) for every variant whose name doesn't contain a
+    /// character `Debug` wouldn't produce, such as a dot -- override only those.
+    pub fn command_name(&self) -> String {
+        match self {
+            ValkeyCommandName::AuditAppend => "audit.append".to_string(),
+            ValkeyCommandName::AuditRange => "audit.range".to_string(),
+            other => format!("{:?}", other).to_lowercase(),
+        }
+    }
 }
 
 pub struct CommandsManager {
@@ -386,7 +403,7 @@ impl CommandMetadata {
             flags.push("notransaction");
         }
 
-        let cmdname = BytesMut::from(format!("{:?}", self.cmd_name).to_lowercase().as_str());
+        let cmdname = BytesMut::from(self.cmd_name.command_name().as_str());
 
         // convert this object into RESP
         builder.add_array_len(&mut buffer, 10);
@@ -1420,6 +1437,23 @@ impl Default for CommandsManager {
                 CommandMetadata::new(ValkeyCommandName::Cluster)
                     .read_only()
                     .no_transaction(),
+            ),
+            // AuditLog commands
+            (
+                "audit.append",
+                CommandMetadata::new(ValkeyCommandName::AuditAppend)
+                    .write()
+                    .with_arity(-3)
+                    .with_first_key(1)
+                    .with_last_key(1),
+            ),
+            (
+                "audit.range",
+                CommandMetadata::new(ValkeyCommandName::AuditRange)
+                    .read_only()
+                    .with_arity(-2)
+                    .with_first_key(1)
+                    .with_last_key(1),
             ),
         ]);
 

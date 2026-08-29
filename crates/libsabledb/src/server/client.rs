@@ -4,9 +4,10 @@ use crate::{
     server::{ClientState, Telemetry},
     utils::RequestParser,
     utils::RespBuilderV2,
-    ClientCommands, ClusterCommands, GenericCommands, HashCommands, ListCommands, LockCommands,
-    ParserError, SableError, ServerCommands, ServerState, SetCommands, StorageAdapter,
-    StringCommands, TransactionCommands, ValkeyCommand, ValkeyCommandName, ZSetCommands,
+    AuditCommands, ClientCommands, ClusterCommands, GenericCommands, HashCommands, ListCommands,
+    LockCommands, ParserError, SableError, ServerCommands, ServerState, SetCommands,
+    StorageAdapter, StringCommands, TransactionCommands, ValkeyCommand, ValkeyCommandName,
+    ZSetCommands,
 };
 
 use bytes::BytesMut;
@@ -681,6 +682,21 @@ impl Client {
                     }
                     HandleCommandResult::ResponseSent => ClientNextAction::NoAction,
                 }
+            }
+            // AuditLog commands
+            ValkeyCommandName::AuditAppend | ValkeyCommandName::AuditRange => {
+                match AuditCommands::handle_command(client_state.clone(), command, tx).await? {
+                    HandleCommandResult::ResponseBufferUpdated(buffer) => {
+                        Self::send_response(tx, &buffer, client_state.id()).await?;
+                    }
+                    HandleCommandResult::Blocked(_) => {
+                        return Err(SableError::OtherError(
+                            "Internal error: client is in invalid state".to_string(),
+                        ));
+                    }
+                    HandleCommandResult::ResponseSent => {}
+                }
+                ClientNextAction::NoAction
             }
             // Client commands
             ValkeyCommandName::Client | ValkeyCommandName::Select => {
