@@ -455,6 +455,101 @@ mod tests {
         assert!(entries.is_empty());
     }
 
+    /// AuditDb writes go through the same `DbWriteCache` -> RocksDB path as every other
+    /// type, so they replicate the same way: as raw Put/Del records streamed from the
+    /// primary's RocksDB change log (`StorageAdapter::storage_updates_since`) and
+    /// replayed on the replica (`StorageAdapter::apply_storage_updates`) -- no
+    /// AuditLog-specific replication code exists or is needed.
+    /// `storage_updates_since` reads from the RocksDB WAL, so (unlike the other tests
+    /// in this file) both stores here must be opened with the WAL enabled --
+    /// `crate::tests::open_store()` disables it for speed.
+    fn open_store_with_wal(name: &str) -> (String, StorageAdapter) {
+        let database_base_dir = std::env::temp_dir()
+            .to_path_buf()
+            .display()
+            .to_string()
+            .replace('\\', "/");
+        let database_fullpath = format!(
+            "{}/sabledb_tests/{}_{}.db",
+            database_base_dir,
+            name,
+            crate::TimeUtils::epoch_micros().unwrap_or(0)
+        );
+        let db_path = PathBuf::from(&database_fullpath);
+        let _ = std::fs::create_dir_all(db_path.parent().unwrap());
+
+        let open_params = StorageOpenParams::default()
+            .set_compression(false)
+            .set_cache_size(64)
+            .set_path(&db_path)
+            .set_wal_disabled(false);
+
+        let mut store = StorageAdapter::default();
+        store.open(open_params).unwrap();
+        (database_fullpath, store)
+    }
+
+    #[test]
+    fn test_audit_log_replication() {
+        use crate::storage::GetChangesLimits;
+        use std::rc::Rc;
+
+        let (primary_path, primary_store) = open_store_with_wal("audit_repl_primary");
+        let (replica_path, replica_store) = open_store_with_wal("audit_repl_replica");
+        let limits = Rc::new(GetChangesLimits::builder().build());
+
+        let task_id = BytesMut::from("task-repl");
+
+        // Phase 1: append entries on the primary, replicate the resulting Puts
+        {
+            let mut primary_audit_db = AuditDb::with_storage(&primary_store, 0);
+            for i in 0..4 {
+                let (event, details) = entry(&format!("event_{i}"), "");
+                primary_audit_db.append(&task_id, &event, &details).unwrap();
+            }
+        }
+
+        let changes = primary_store
+            .storage_updates_since(0, limits.clone())
+            .unwrap();
+        assert!(changes.changes_count > 0);
+        replica_store.apply_storage_updates(&changes).unwrap();
+
+        let replica_audit_db = AuditDb::with_storage(&replica_store, 0);
+        let AuditRangeResult::Some(entries) = replica_audit_db.range(&task_id, None, None).unwrap()
+        else {
+            panic!("Expected AuditRangeResult::Some");
+        };
+        assert_eq!(entries.len(), 4);
+        for (i, e) in entries.iter().enumerate() {
+            assert_eq!(e.event, BytesMut::from(format!("event_{i}").as_str()));
+        }
+
+        // Phase 2: delete the AuditLog container on the primary, replicate the tombstone
+        let next_batch_seq = changes.end_seq_number;
+        {
+            let mut primary_audit_db = AuditDb::with_storage(&primary_store, 0);
+            primary_audit_db.delete(&task_id).unwrap();
+        }
+
+        let changes = primary_store
+            .storage_updates_since(next_batch_seq, limits)
+            .unwrap();
+        assert!(changes.changes_count > 0);
+        replica_store.apply_storage_updates(&changes).unwrap();
+
+        let AuditRangeResult::Some(entries) = replica_audit_db.range(&task_id, None, None).unwrap()
+        else {
+            panic!("Expected AuditRangeResult::Some");
+        };
+        assert!(entries.is_empty());
+
+        drop(primary_store);
+        drop(replica_store);
+        let _ = std::fs::remove_dir_all(&primary_path);
+        let _ = std::fs::remove_dir_all(&replica_path);
+    }
+
     /// Covers Task 0.1's "Done when" criterion: entries survive a SableDB restart.
     #[test]
     fn test_entries_persist_across_restart() {
