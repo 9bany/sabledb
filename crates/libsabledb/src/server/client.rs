@@ -21,6 +21,12 @@ use std::sync::Mutex;
 const PONG: &[u8] = b"+PONG\r\n";
 const OPTIONS_LOCK_ERR: &str = "Failed to obtain read lock on ServerOptions";
 
+/// Replies are collected in a user space buffer of this size before a write syscall is made.
+/// The buffer is flushed as soon as the client has no other parsed command waiting, so this
+/// only delays a reply while the client keeps the pipeline full. Writes larger than this
+/// value bypass the buffer and go straight to the socket
+const CLIENT_WRITE_BUFFER_SIZE: usize = 16 * 1024;
+
 #[allow(unused_imports)]
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -133,6 +139,7 @@ impl Client {
             tracing::trace!("Waiting for TLS handshake");
             let tls_stream = tls_acceptor.accept(tokio_stream).await?;
             let (rx, tx) = tokio::io::split(tls_stream);
+            let tx = tokio::io::BufWriter::with_capacity(CLIENT_WRITE_BUFFER_SIZE, tx);
             let shared_state = self.state.clone();
             let r = tokio::task::spawn_local(async move {
                 let _ = Self::reader_loop(rx, channel_tx, shared_state).await;
@@ -146,6 +153,7 @@ impl Client {
         } else {
             // No TLS
             let (rx, tx) = tokio::io::split(tokio_stream);
+            let tx = tokio::io::BufWriter::with_capacity(CLIENT_WRITE_BUFFER_SIZE, tx);
             let shared_state = self.state.clone();
             let r = tokio::task::spawn_local(async move {
                 let _ = Self::reader_loop(rx, channel_tx, shared_state).await;
@@ -276,6 +284,11 @@ impl Client {
                             timeout_response,
                             try_again_response,
                         )) => {
+                            // The client is about to be suspended. Push anything that is still
+                            // sitting in the write buffer to the network first, or it would be
+                            // held back for the whole duration of the wait
+                            tx.flush().await?;
+
                             // suspend the client for the specified duration or until a wakeup bit arrives
                             match (Self::wait_for(rx, duration).await, try_again_response) {
                                 (WaitResult::Timeout, _) => {
@@ -331,6 +344,9 @@ impl Client {
                             }
                         }
                         ClientNextAction::TerminateConnection => {
+                            // Best effort: try to deliver the error message that was produced
+                            // for the client before the connection goes away
+                            let _ = tx.flush().await;
                             return Err(SableError::ConnectionClosed);
                         }
                     },
@@ -376,11 +392,20 @@ impl Client {
                             "failed to process command: {:?} error: {:?}",
                             command, e
                         ));
+                        let _ = tx.flush().await;
                         return Err(e);
                     }
                 }
             }
+
+            // A write syscall per reply is the main limit for a pipelining client. Keep the
+            // reply in the write buffer while this client has more commands already parsed and
+            // waiting, so that a run of replies leaves in a single write
+            if channel_rx.is_empty() {
+                tx.flush().await?;
+            }
         }
+        tx.flush().await?;
         Ok(())
     }
 
