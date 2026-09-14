@@ -333,6 +333,7 @@ and visit this page again in couple of days
 |---|---|---|---|
 | client id | ✓ |✓ |   |
 | client kill | ✓ |x |  supports: `client kill ID <client-id>` |
+| hello | ✓ |x | `RESP2` only, `AUTH` is not supported |
 | select | ✓ |✓ |   |
 | ping | ✓ |✓ |   |
 

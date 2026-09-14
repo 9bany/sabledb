@@ -726,7 +726,7 @@ impl Client {
                 ClientNextAction::NoAction
             }
             // Client commands
-            ValkeyCommandName::Client | ValkeyCommandName::Select => {
+            ValkeyCommandName::Client | ValkeyCommandName::Select | ValkeyCommandName::Hello => {
                 match ClientCommands::handle_command(client_state.clone(), command, tx).await? {
                     HandleCommandResult::ResponseBufferUpdated(buffer) => {
                         Self::send_response(tx, &buffer, client_state.id()).await?;

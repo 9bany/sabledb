@@ -85,6 +85,7 @@ pub enum ValkeyCommandName {
     // Client commands
     Client,
     Select,
+    Hello,
     // Server commands
     ReplicaOf,
     SlaveOf,
@@ -759,6 +760,16 @@ impl Default for CommandsManager {
                 "client",
                 CommandMetadata::new(ValkeyCommandName::Client)
                     .connection()
+                    .no_transaction(),
+            ),
+            (
+                "hello",
+                CommandMetadata::new(ValkeyCommandName::Hello)
+                    .connection()
+                    .with_arity(-1)
+                    .with_first_key(0)
+                    .with_last_key(0)
+                    .with_step(0)
                     .no_transaction(),
             ),
             (
